@@ -1,5 +1,6 @@
 from prompt_toolkit import PromptSession
 
+from IPython import embed
 import types
 
 from prompt_toolkit.completion import Completion, Completer
@@ -95,6 +96,7 @@ def command_handler(fn):
     def wrapper(vapp, commands):
         import sys
         from io import StringIO
+        ret = True
 
         try:
             codeOut = StringIO()
@@ -103,7 +105,7 @@ def command_handler(fn):
             sys.stdout = codeOut
             sys.stderr = codeErr
 
-            fn(vapp, commands)
+            ret = fn(vapp, commands)
 
             # restore stdout and stderr
             sys.stdout = sys.__stdout__
@@ -122,19 +124,38 @@ def command_handler(fn):
                 f.write(output)
             subprocess.call(['vim', '/tmp/vimapp_tmp'])
             os.remove('/tmp/vimapp_tmp')
-        else:
+        elif len(output.strip()) > 0:
             print(output)
+        return ret
 
     return wrapper
 
 class Vimapp:
+    @staticmethod
+    def embed_command_handler(vapp, commands):
+        embed()
+        return True
+
+    @staticmethod
+    def exit_command_handler(vapp, commands):
+        return False
+
+    @staticmethod
+    def clear_command_handler(vapp, commands):
+        import sys
+        sys.stdout.write('\033c')
+        return True
+
+    def __add_base_commands(self):
+        self.commands['exit'] = Vimapp.exit_command_handler
+        self.commands['clear'] = Vimapp.clear_command_handler
+        self.commands['embed'] = Vimapp.embed_command_handler
+
     def __init__(self, name, commands):
         self.name = name
         self.commands = commands
 
-        # adding base commands
-        commands['exit'] = None
-        commands['clear'] = None
+        self.__add_base_commands()
 
         commands_completer = NestedCommandsFuzzyWordCompleter(self.commands, None)
         self.session = PromptSession(vi_mode=True,
@@ -147,11 +168,6 @@ class Vimapp:
         commands = command.split()
 
         if len(commands) == 0: return True
-        if commands[0] == "exit": return False
-        if commands[0] == "clear": 
-            # TODO: clean the screen
-            print('\033c')
-            return True
             
         try:
             curr_state = self.commands
@@ -161,7 +177,7 @@ class Vimapp:
                     curr_state = curr_state[c]
 
             fn = command_handler(curr_state)
-            fn(self, commands)
+            return fn(self, commands)
 
         except Exception as e: 
             print(f"Exception: {e}")
