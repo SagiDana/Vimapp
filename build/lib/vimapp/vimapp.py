@@ -2,7 +2,6 @@ from prompt_toolkit import PromptSession
 
 import types
 
-
 from prompt_toolkit.completion import Completion, Completer
 class NestedCommandsFuzzyWordCompleter(Completer):
     def __init__(self, commands={}, completers={}):
@@ -60,9 +59,39 @@ class NestedCommandsFuzzyWordCompleter(Completer):
                         yield Completion(complete_word, start_position=-len(word))
             except: return
 
+def get_terminal_size():
+    import os
+    env = os.environ
+    def ioctl_GWINSZ(fd):
+        try:
+            import fcntl, termios, struct, os
+            cr = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ,
+        '1234'))
+        except:
+            return
+        return cr
+    cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
+    if not cr:
+        try:
+            fd = os.open(os.ctermid(), os.O_RDONLY)
+            cr = ioctl_GWINSZ(fd)
+            os.close(fd)
+        except:
+            pass
+    if not cr:
+        cr = (env.get('LINES', 25), env.get('COLUMNS', 80))
+
+        ### Use get(key[, default]) instead of a try/catch
+        #try:
+        #    cr = (env['LINES'], env['COLUMNS'])
+        #except:
+        #    cr = (25, 80)
+    return int(cr[1]), int(cr[0])
+
 import subprocess
 import os
-def vim_wrapper(fn):
+def command_handler(fn):
+    (width, height) = get_terminal_size()
     def wrapper(vapp, commands):
         import sys
         from io import StringIO
@@ -74,7 +103,7 @@ def vim_wrapper(fn):
             sys.stdout = codeOut
             sys.stderr = codeErr
 
-            fn(vim_wrapper, commands)
+            fn(vapp, commands)
 
             # restore stdout and stderr
             sys.stdout = sys.__stdout__
@@ -88,15 +117,15 @@ def vim_wrapper(fn):
         except Exception as e:
             output = str(e)
 
-        print(output)
-
-        with open('/tmp/vimapp_tmp', 'w+') as f:
-            f.write(output)
-        subprocess.call(['vim', '/tmp/vimapp_tmp'])
-        os.remove('/tmp/vimapp_tmp')
+        if len(output.splitlines()) > height:
+            with open('/tmp/vimapp_tmp', 'w+') as f:
+                f.write(output)
+            subprocess.call(['vim', '/tmp/vimapp_tmp'])
+            os.remove('/tmp/vimapp_tmp')
+        else:
+            print(output)
 
     return wrapper
-
 
 class Vimapp:
     def __init__(self, name, commands):
@@ -113,7 +142,12 @@ class Vimapp:
     def __root_command_handler(self, command):
         commands = command.split()
 
-        if len(commands) == 0: return
+        if len(commands) == 0: return True
+        if commands[0] == "exit": return False
+        if commands[0] == "clear": 
+            # TODO: clean the screen
+            print('\033c')
+            return True
             
         try:
             curr_state = self.commands
@@ -122,8 +156,12 @@ class Vimapp:
                 if not isinstance(curr_state, types.FunctionType):
                     curr_state = curr_state[c]
 
-            curr_state(self, commands)
-        except Exception as e: pass
+            fn = command_handler(curr_state)
+            fn(self, commands)
+
+        except Exception as e: 
+            print(f"Exception: {e}")
+        return True
 
     def run(self):
         # self.app.run() # You won't be able to Exit this app
@@ -131,7 +169,7 @@ class Vimapp:
             try:
                 command = self.session.prompt(f"{self.name}> ")
 
-                self.__root_command_handler(command)
+                if not self.__root_command_handler(command): break
 
             except KeyboardInterrupt as e: break
             except Exception as e: print(f"Exception: {e}")
