@@ -132,6 +132,10 @@ class Vimapp:
         self.name = name
         self.commands = commands
 
+        # adding base commands
+        commands['exit'] = None
+        commands['clear'] = None
+
         commands_completer = NestedCommandsFuzzyWordCompleter(self.commands, None)
         self.session = PromptSession(vi_mode=True,
                                         # reserve_space_for_menu=2,
