@@ -4,17 +4,39 @@ from IPython import embed
 import types
 
 from prompt_toolkit.completion import Completion, Completer
+
 class NestedCommandsFuzzyWordCompleter(Completer):
     def __init__(self, commands={}, completers={}):
-        self.__sub_completers = completers
+        self.__completers = completers
         self.__commands = commands
 
     def get_completions(self, document, complete_event):
         text_before_cursor = str(document.text_before_cursor)
         previous_words = text_before_cursor.split()
+        suggestions = []
 
+        # First try using the completers
+
+        # Getting the completer provided by the client (in case he provided one).
+        chosen_completer = self.__completers
+        index_of_last = 0
+        for word in previous_words:
+            try:
+                chosen_completer = chosen_completer[word]
+                index_of_last += 1
+            except: 
+                chosen_completer = None # do FALLBACK
+        if chosen_completer:
+            for complete_word in list(chosen_completer.keys()):
+                word = document.get_word_before_cursor()
+
+                if complete_word.startswith(word):
+                    suggestions.append(complete_word)
+                    # suggestions.append(Completion(  complete_word, 
+                                                    # start_position=-len(word)))
+
+        # Second try using the commands to get next commands
         current_state = self.__commands
-
         # Get to the current command node in commands dictionary.
         for word in previous_words:
             try:
@@ -25,40 +47,24 @@ class NestedCommandsFuzzyWordCompleter(Completer):
             if not command: break
 
             current_state = current_state.get(word)
-            
-        # Getting the completer provided by the client (in case he provided one).
-        chosen_completer = self.__sub_completers
-        index_of_last_command = 0
-        for word in previous_words:
-            try:
-                chosen_completer = chosen_completer[word]
-                index_of_last_command += 1
-            except: pass
 
-        # Check if dedicated completer was provided by the user
-        # if not use the commands dictionary.
-        # Client provided completer take precedent over the commands dictionary.
-        if chosen_completer != None and isinstance(chosen_completer, Completer):
+        try:
+            for complete_word in list(current_state.keys()):
+                word = document.get_word_before_cursor()
 
-            # Generate the relevant document for dedicated completer.
-            relevant_text = " ".join(document.text_before_cursor.split()[index_of_last_command:])
-            relevant_document = Document(text=relevant_text)
+                if complete_word.startswith(word):
+                    suggestions.append(complete_word)
+                    # suggestions.append(Completion(  complete_word, 
+                                                    # start_position=-len(word)))
+        except: pass
 
-            # Using the completer provided by the client
-            yield from (Completion(completion.text, completion.start_position, display=completion.display)
-                        for completion
-                        in chosen_completer.get_completions(relevant_document, complete_event))
-            # return chosen_completer.get_completions(relevant_document, complete_event)
+        # remove duplicates
+        suggestions = set(suggestions)
+        len_curr = len(document.get_word_before_cursor())
+        for suggestion in suggestions:
+            yield Completion(suggestion,
+                             start_position=-len_curr)
 
-        # Using the command node to get next commands
-        else:
-            try:
-                for complete_word in list(current_state.keys()):
-                    word = document.get_word_before_cursor()
-
-                    if complete_word.startswith(word):
-                        yield Completion(complete_word, start_position=-len(word))
-            except: return
 
 def get_terminal_size():
     import os
@@ -144,7 +150,6 @@ class Vimapp:
     def clear_command_handler(vapp, commands):
         import sys
         sys.stdout.write('\033c')
-        # print('\033c', end="") # without newline
         return True
 
     def __add_base_commands(self):
@@ -152,13 +157,14 @@ class Vimapp:
         self.commands['clear'] = Vimapp.clear_command_handler
         self.commands['embed'] = Vimapp.embed_command_handler
 
-    def __init__(self, name, commands):
+    def __init__(self, name, commands, completers=None):
         self.name = name
         self.commands = commands
 
         self.__add_base_commands()
 
-        commands_completer = NestedCommandsFuzzyWordCompleter(self.commands, None)
+        commands_completer = NestedCommandsFuzzyWordCompleter(  self.commands, 
+                                                                completers)
         self.session = PromptSession(vi_mode=True,
                                         # reserve_space_for_menu=2,
                                         completer=commands_completer)
